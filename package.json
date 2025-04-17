@@ -1,0 +1,15 @@
+{
+  "name": "ai-coaching-monorepo",
+  "version": "1.0.0",
+  "description": "モノレポ構成のプロジェクト",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "frontend": "bun --cwd apps/frontend",
+    "backend": "bun --cwd apps/backend"
+  },
+  "author": "",
+  "license": "MIT"
+}
