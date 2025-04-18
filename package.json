@@ -7,8 +7,8 @@
     "apps/*"
   ],
   "scripts": {
-    "frontend": "bun --cwd apps/frontend",
-    "backend": "bun --cwd apps/backend"
+    "frontend": "bun run --filter frontend dev",
+    "backend": "bun run --filter backend dev"
   },
   "author": "",
   "license": "MIT"
