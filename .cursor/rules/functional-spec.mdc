@@ -1,0 +1,147 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+## コーチングAIエージェント ウェブアプリ 機能設計書（MVP版）
+
+**1. 機能一覧（MVP）**
+
+- **1.1. ユーザー認証機能:**
+  - 新規ユーザー登録（メールアドレス/パスワード）
+  - ログイン（メールアドレス/パスワード）
+- **1.2. コーチングセッション機能:**
+  - ユーザーからのメッセージ送信
+  - AIコーチからの応答生成・表示
+- **1.3. 対話履歴表示機能:**
+  - 自身の過去の対話履歴（ユーザーメッセージとAI応答）を時系列で簡易表示
+
+**2. システム構成概要図（簡易）**
+
+```
+[ユーザー] <--> [Next.js (Frontend on Cloudflare Pages/Workers)] <--> [Mastra (Backend API on Cloudflare Workers)] <--> [Cloudflare D1 (Database)]
+      ^                                                                     |
+      |                                                                     v
+      +---------------------------------------------------------------------+ [OpenAI API / Cloudflare Workers AI]
+      |
+      v
+[NextAuth.js (認証処理)]
+```
+
+- **Frontend（Next.js）:** UI表示、ユーザー操作受付、Mastra APIとの通信。`shadcn/ui` と `Tailwind CSS` を使用。
+- **Backend API（Mastra on Workers）:** ビジネスロジック、DBアクセス、外部AI API呼び出し、認証処理の一部。
+- **Database（Cloudflare D1）:** ユーザー情報、対話履歴の永続化。
+- **AI（OpenAI API / Workers AI）:** ユーザーのメッセージに基づき、コーチング的な応答を生成。
+- **Authentication（NextAuth.js）:** 認証フローの管理、セッション管理。Credentials Providerを使用し、Mastraの認証エンドポイントと連携。
+
+**3. 各機能詳細**
+
+- **3.1. ユーザー認証機能**
+
+  - **機能概要:** メールアドレスとパスワードによるユーザー登録とログインを提供する。
+  - **使用技術:** NextAuth.js（Credentials Provider）, Mastra, Cloudflare D1, bcrypt（パスワードハッシュ化）
+  - **処理フロー（新規登録）:**
+    1.  フロントエンド: ユーザーがメールアドレス、パスワードを入力し、登録ボタンをクリック。
+    2.  フロントエンド: `/api/auth/register`（Mastra）に入力情報をPOSTリクエスト。
+    3.  Mastra: リクエストを受け取り、入力値をバリデーション。
+    4.  Mastra: メールアドレスがすでに存在しないかD1の `Users` テーブルを検索。
+    5.  Mastra: パスワードをハッシュ化（bcryptを使用）。
+    6.  Mastra: 新しいユーザー情報を `Users` テーブルに挿入。
+    7.  Mastra: 登録成功または失敗（重複など）のレスポンスをフロントエンドに返す。
+    8.  フロントエンド: 結果に応じてメッセージ表示またはログイン画面へ誘導。
+  - **処理フロー（ログイン）:**
+    1.  フロントエンド: ユーザーがメールアドレス、パスワードを入力し、ログインボタンをクリック。
+    2.  フロントエンド: NextAuth.jsの `signIn` 関数を `credentials` プロバイダーで呼び出す。
+    3.  NextAuth.js: 設定された `authorize` 関数を実行。この関数内でMastraの認証ロジックを呼び出す想定（例: Mastraの `/api/auth/verify` を内部的に叩く、またはMastraのロジックを直接実装）。
+    4.  Mastra（または `authorize` 関数内）: メールアドレスで `Users` テーブルを検索。
+    5.  Mastra: ユーザーが存在すれば、入力されたパスワードとDBのハッシュ化パスワードを `bcrypt.compare` で比較。
+    6.  Mastra: 認証成功ならユーザー情報をNextAuth.jsに返す。失敗ならエラーを返す。
+    7.  NextAuth.js: 認証成功ならセッションを生成し、Cookieにセッショントークンを設定。失敗ならエラー情報をフロントエンドに返す。
+    8.  フロントエンド: ログイン成功ならコーチング画面へリダイレクト。失敗ならエラーメッセージ表示。
+  - **APIエンドポイント（Mastra）:**
+    - `POST /api/auth/register`: 新規ユーザー登録 \*（NextAuth.jsの `authorize` 関数が内部的に利用する認証検証ロジックが必要）
+  - **DBテーブル:** `Users`
+
+- **3.2. コーチングセッション機能**
+
+  - **機能概要:** ユーザーがメッセージを入力すると、AIコーチが応答を返し、対話が進行する。対話内容は保存される。
+  - **使用技術:** Next.js（クライアント）, Mastra, OpenAI API / Cloudflare Workers AI, Cloudflare D1
+  - **処理フロー:**
+    1.  フロントエンド: ユーザーがメッセージを入力し、送信ボタンをクリック。
+    2.  フロントエンド: 入力メッセージを `/api/messages`（Mastra）にPOSTリクエスト（認証済みユーザーのみ）。
+    3.  Mastra: リクエストを受け取り、ユーザーを特定。
+    4.  Mastra: ユーザーのメッセージを `Messages` テーブルに保存（`role: 'user'`）。
+    5.  Mastra:（コンテキスト管理）過去の対話履歴（直近N件など）を `Messages` テーブルから取得。
+    6.  Mastra: 取得した履歴と新しいユーザーメッセージを含めて、AI API（OpenAI or Workers AI）に送信するためのプロンプトを構築。
+    7.  Mastra: AI APIを呼び出し、応答を生成させる。
+    8.  Mastra: AIからの応答を受け取る。
+    9.  Mastra: AIの応答を `Messages` テーブルに保存（`role: 'assistant'`）。
+    10. Mastra: AIの応答をフロントエンドに返す。
+    11. フロントエンド: 受け取ったAIの応答を画面に表示する。
+  - **APIエンドポイント（Mastra）:**
+    - `POST /api/messages`: 新しいメッセージを送信し、AIの応答を取得する。
+  - **AI連携方針:**（詳細は後述の「6. AI連携設計」）
+  - **DBテーブル:** `Messages`
+
+- **3.3. 対話履歴表示機能**
+  - **機能概要:** ログインユーザー自身の過去の対話履歴を簡易的なリスト形式で表示する。
+  - **使用技術:** Next.js（クライアント）, Mastra, Cloudflare D1
+  - **処理フロー:**
+    1.  フロントエンド: 履歴表示エリア（またはページ）が表示される際に、`/api/messages`（Mastra）にGETリクエスト（認証済みユーザーのみ）。
+    2.  Mastra: リクエストを受け取り、ユーザーを特定。
+    3.  Mastra: 該当ユーザーの対話履歴を `Messages` テーブルから時系列（例: `createdAt` 降順）で取得。
+    4.  Mastra: 取得した履歴データをフロントエンドに返す。
+    5.  フロントエンド: 受け取った履歴データをリスト形式で画面に表示する。
+  - **APIエンドポイント（Mastra）:**
+    - `GET /api/messages`: 自身の対話履歴を取得する。
+
+**4. API設計（Mastra - MVP）**
+
+- **`POST /api/auth/register`**
+  - 説明: 新規ユーザー登録
+  - リクエストボディ: `{ "email": "user@example.com", "password": "yourpassword" }`
+  - レスポンス（成功）: `{ "success": true }`（ステータスコード201）
+  - レスポンス（失敗）: `{ "success": false, "error": "エラーメッセージ" }`（ステータスコード400, 409など）
+- **`POST /api/messages`**
+  - 説明: メッセージを送信し、AIの応答を取得
+  - 認証: 必要（NextAuth.jsによるセッショントークン）
+  - リクエストボディ: `{ "content": "ユーザーからのメッセージ内容" }`
+  - レスポンス（成功）: `{ "id": "message_id", "role": "assistant", "content": "AIからの応答内容", "createdAt": "timestamp" }`（ステータスコード200 or 201）
+  - レスポンス（失敗）: `{ "error": "エラーメッセージ" }`（ステータスコード400, 500など）
+- **`GET /api/messages`**
+  - 説明: 自身の対話履歴を取得
+  - 認証: 必要（NextAuth.jsによるセッショントークン）
+  - クエリパラ<!--  -->メータ（任意）: `limit`, `offset` など（将来的なページネーション用だがMVPでは必須ではない）
+  - レスポンス（成功）: `[{ "id": "...", "role": "user", "content": "...", "createdAt": "..." }, { "id": "...", "role": "assistant", "content": "...", "createdAt": "..." }, ...]`（ステータスコード200）
+  - レスポンス（失敗）: `{ "error": "エラーメッセージ" }`（ステータスコード500など）
+
+**5. データベース設計（Cloudflare D1 - MVP）**
+
+- **`Users` テーブル**
+  - `id`（TEXT, PRIMARY KEY）- UUIDなどを想定
+  - `email`（TEXT, UNIQUE NOT NULL）
+  - `hashedPassword`（TEXT, NOT NULL）
+  - `createdAt`（TEXT）- ISO 8601形式のタイムスタンプ文字列
+  - `updatedAt`（TEXT）- ISO 8601形式のタイムスタンプ文字列
+- **`Messages` テーブル**
+  - `id`（TEXT, PRIMARY KEY）- UUIDなどを想定
+  - `userId`（TEXT, NOT NULL）- `Users` テーブルの `id` への外部キー参照（D1では制約は適用されないが論理的に）
+  - `role`（TEXT, NOT NULL）- 'user' または 'assistant'
+  - `content`（TEXT, NOT NULL）- メッセージ内容
+  - `createdAt`（TEXT）- ISO 8601形式のタイムスタンプ文字列
+
+**6. AI連携設計（MVP）**
+
+- **使用API:** OpenAI API（例: `gpt-3.5-turbo` や `gpt-4`）またはCloudflare Workers AI（例: `@cf/meta/llama-2-7b-chat-fp16`）のいずれか、または状況に応じて切り替えられるようにする。選択はコスト、性能、レイテンシを考慮。
+- **APIキー管理:** Cloudflare Workers Secretsを使用し、環境変数としてMastra（Worker）に安全に渡す。コードには直接記述しない。
+- **基本プロンプト構成:**
+  - システムプロンプト: AIの役割（コーチであること、対話スタイルなど）を指示する。例:「あなたはユーザーの目標達成を支援する経験豊富なコーチです。傾聴し、深い質問を投げかけ、ユーザーの内省を促してください。」
+  - ユーザーメッセージ履歴: 直近の対話履歴（ユーザーとAIの発言）を `[{role: 'user', content: '...'}, {role: 'assistant', content: '...'}]` の形式で含める。
+  - 現在のユーザーメッセージ: ユーザーが新たに入力したメッセージ。
+- **コンテキスト管理:**
+  - MVPでは、直近のN件（例: 5〜10往復）のメッセージを履歴としてプロンプトに含める方式を採用する。
+  - トークン数の上限を超えないように、古いメッセージから削除する。
+  - 将来的な拡張: より高度な要約技術やベクトルデータベースの活用も検討。
+- **エラーハンドリング:**
+  - AI APIからのエラーレスポンス（レート制限、サーバーエラーなど）を適切にハンドリングし、ユーザーには「AIが応答できませんでした。しばらくしてから再試行してください」などのメッセージを表示する。
+  - タイムアウト処理を実装する。
