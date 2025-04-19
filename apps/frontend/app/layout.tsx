@@ -5,8 +5,8 @@ import "./globals.css";
 const notsSans = Noto_Sans_JP({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "AIコーチング",
-  description: "AIコーチングプラットフォーム",
+  title: "Maesta Test",
+  description: "Maesta Test",
 };
 
 export default function RootLayout({

@@ -1,24 +1,12 @@
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
+import { GeminiAgentForm } from "./components/gemini-agent-form";
+import { GptAgentForm } from "./components/gpt-agent-form";
 
-export default function Home() {
+export default async function Home() {
   return (
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-b from-gray-100 to-gray-200">
       <div className="text-center space-y-6">
-        <h1 className="text-4xl font-bold tracking-tight">
-          AIコーチングプラットフォーム
-        </h1>
-        <p className="text-xl text-gray-600">
-          AIコーチングでスキルアップをサポートします
-        </p>
-        <div className="flex gap-4 justify-center">
-          <Button asChild>
-            <Link href="/register">新規登録</Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/login">ログイン</Link>
-          </Button>
-        </div>
+        <GptAgentForm />
+        <GeminiAgentForm />
       </div>
     </div>
   );
